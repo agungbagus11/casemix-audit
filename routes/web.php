@@ -27,4 +27,21 @@ Route::prefix('casemix')->group(function () {
     Route::post('/{id}/update-review', [CasemixDashboardController::class, 'updateToReview'])
         ->whereNumber('id')
         ->name('casemix.update-review');
+
+    Route::post('/{id}/verification/{verificationKey}', [CasemixDashboardController::class, 'saveVerification'])
+        ->whereNumber('id')
+        ->name('casemix.save-verification');
+
+    Route::post('/{id}/follow-up', [CasemixDashboardController::class, 'createFollowUp'])
+        ->whereNumber('id')
+        ->name('casemix.create-follow-up');
+
+    Route::post('/{id}/follow-up/{followUpId}', [CasemixDashboardController::class, 'updateFollowUp'])
+        ->whereNumber('id')
+        ->whereNumber('followUpId')
+        ->name('casemix.update-follow-up');
+
+    Route::post('/{id}/import-operational', [CasemixDashboardController::class, 'importOperational'])
+        ->whereNumber('id')
+        ->name('casemix.import-operational');
 });

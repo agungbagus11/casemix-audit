@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\InternalApi\ClaimAiResultController;
 use App\Http\Controllers\InternalApi\ClaimAuditController;
 use App\Http\Controllers\InternalApi\ClaimWorkflowController;
+use App\Http\Controllers\InternalApi\ClaimVerificationController;
 
 /*
 |--------------------------------------------------------------------------
@@ -29,6 +30,10 @@ Route::prefix('internal-api')->group(function () {
         ->whereNumber('id');
     Route::post('/claim-episodes/{id}/status', [ClaimWorkflowController::class, 'updateStatus'])
         ->whereNumber('id');
+    Route::post('/claim-episodes/{id}/verification/ensure-defaults', [ClaimVerificationController::class, 'ensureDefaults'])
+    ->whereNumber('id');
+    Route::post('/claim-episodes/{id}/verification/{verificationKey}', [ClaimVerificationController::class, 'update'])
+    ->whereNumber('id');
 });
 
 

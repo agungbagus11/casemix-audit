@@ -61,4 +61,14 @@ class ClaimEpisode extends Model
     {
         return $this->hasMany(ClaimReview::class);
     }
+
+    public function verificationItems()
+    {
+        return $this->hasMany(ClaimVerificationItem::class);
+    }
+
+    public function followUps()
+    {
+        return $this->hasMany(ClaimFollowUp::class)->latest();
+    }
 }

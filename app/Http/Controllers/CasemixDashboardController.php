@@ -4,7 +4,10 @@ namespace App\Http\Controllers;
 
 use App\Models\ClaimEpisode;
 use App\Services\AuditResultService;
+use App\Services\ClaimFollowUpService;
 use App\Services\ClaimSyncService;
+use App\Services\ClaimVerificationService;
+use App\Services\OperationalImportService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\View\View;
@@ -23,6 +26,8 @@ class CasemixDashboardController extends Controller
                 'documents',
                 'auditFlags',
                 'reviews',
+                'verificationItems',
+                'followUps',
             ])
             ->orderByRaw("
                 CASE
@@ -70,14 +75,18 @@ class CasemixDashboardController extends Controller
         return view('casemix.index', compact('episodes', 'stats', 'q', 'stage', 'risk'));
     }
 
-    public function show(int $id): View
+    public function show(int $id, ClaimVerificationService $claimVerificationService): View
     {
+        $claimVerificationService->ensureDefaultItems($id);
+
         $episode = ClaimEpisode::query()
             ->with([
                 'documents',
                 'aiResults' => fn ($q) => $q->latest(),
                 'auditFlags' => fn ($q) => $q->latest(),
                 'reviews' => fn ($q) => $q->latest(),
+                'verificationItems' => fn ($q) => $q->orderBy('id'),
+                'followUps' => fn ($q) => $q->latest(),
             ])
             ->findOrFail($id);
 
@@ -86,52 +95,15 @@ class CasemixDashboardController extends Controller
         $cpptText = (string) data_get($snapshot, 'clinical_data.cppt_text', '');
         $resumeText = (string) data_get($snapshot, 'clinical_data.resume_text', '');
         $billingItems = (array) data_get($snapshot, 'administrative_data.billing_items', []);
-        $documents = $episode->documents;
-
-        $verificationPanels = [
-            [
-                'key' => 'billing_cppt',
-                'title' => 'Kelengkapan Billing vs CPPT',
-                'desc' => 'Membandingkan item billing dengan aktivitas/tindakan yang tertulis di CPPT dan resume.',
-                'status' => count($billingItems) > 0 && $cpptText !== '' ? 'ready_check' : 'incomplete',
-                'points' => [
-                    'Apakah tindakan/alat/visit yang muncul di billing punya jejak di CPPT?',
-                    'Apakah ada billing besar tanpa dukungan narasi klinis?',
-                    'Apakah item penunjang sudah sejalan dengan kronologi perawatan?',
-                ],
-            ],
-            [
-                'key' => 'chronology_cppt',
-                'title' => 'Kesesuaian Form Kronologis vs CPPT',
-                'desc' => 'Panel untuk telekonfirmasi admisi bila ada kronologis yang tidak sinkron dengan CPPT.',
-                'status' => $cpptText !== '' ? 'ready_check' : 'incomplete',
-                'points' => [
-                    'Apakah tanggal/jam kejadian sesuai urutan di CPPT?',
-                    'Apakah alasan masuk rawat inap / IGD konsisten?',
-                    'Apakah narasi kronologis mendukung klaim yang diajukan?',
-                ],
-            ],
-            [
-                'key' => 'documents_rm',
-                'title' => 'Kelengkapan Berkas vs Rekam Medis',
-                'desc' => 'Panel koordinasi dengan RM untuk memastikan bundling berkas lengkap.',
-                'status' => $documents->count() > 0 ? 'ready_check' : 'incomplete',
-                'points' => [
-                    'Resume medis oleh DPJP',
-                    'Laporan operasi / tindakan bila ada',
-                    'Hasil penunjang utama yang menjadi dasar klaim',
-                    'Berkas lain sesuai kebutuhan verifikasi',
-                ],
-            ],
-        ];
+        $operationalLinks = config('casemix.operational_links', []);
 
         return view('casemix.show', compact(
             'episode',
             'snapshot',
-            'verificationPanels',
             'cpptText',
             'resumeText',
-            'billingItems'
+            'billingItems',
+            'operationalLinks'
         ));
     }
 
@@ -139,9 +111,7 @@ class CasemixDashboardController extends Controller
     {
         app(ClaimSyncService::class)->syncDischargesByDate('2026-04-15');
 
-        return redirect()
-            ->route('casemix.index')
-            ->with('success', 'Mock discharge berhasil disinkronkan.');
+        return redirect()->route('casemix.index')->with('success', 'Mock discharge berhasil disinkronkan.');
     }
 
     public function runMockAi(int $id): RedirectResponse
@@ -151,37 +121,21 @@ class CasemixDashboardController extends Controller
             'prompt_version' => 'v1',
             'primary_diagnosis_text' => 'Sepsis ec pneumonia berat',
             'primary_icd10_json' => [
-                [
-                    'code' => 'A41.9',
-                    'label' => 'Sepsis, unspecified organism',
-                    'confidence' => 0.88,
-                ],
+                ['code' => 'A41.9', 'label' => 'Sepsis, unspecified organism', 'confidence' => 0.88],
             ],
             'secondary_icd10_json' => [
-                [
-                    'code' => 'J18.9',
-                    'label' => 'Pneumonia, unspecified organism',
-                    'confidence' => 0.84,
-                ],
+                ['code' => 'J18.9', 'label' => 'Pneumonia, unspecified organism', 'confidence' => 0.84],
             ],
             'procedure_json' => [
-                [
-                    'code' => '96.72',
-                    'label' => 'Continuous mechanical ventilation',
-                    'confidence' => 0.82,
-                ],
+                ['code' => '96.72', 'label' => 'Continuous mechanical ventilation', 'confidence' => 0.82],
             ],
             'confidence_score' => 88.5,
             'missing_data_json' => [],
             'ai_notes' => 'Mock AI result berhasil disimpan dari dashboard.',
-            'raw_response_json' => [
-                'source' => 'dashboard',
-            ],
+            'raw_response_json' => ['source' => 'dashboard'],
         ]);
 
-        return redirect()
-            ->route('casemix.index')
-            ->with('success', "Mock AI result untuk episode ID {$id} berhasil disimpan.");
+        return redirect()->route('casemix.index')->with('success', "Mock AI result untuk episode ID {$id} berhasil disimpan.");
     }
 
     public function runMockAudit(int $id): RedirectResponse
@@ -214,9 +168,7 @@ class CasemixDashboardController extends Controller
             ],
         ]);
 
-        return redirect()
-            ->route('casemix.index')
-            ->with('success', "Mock audit flags untuk episode ID {$id} berhasil disimpan.");
+        return redirect()->route('casemix.index')->with('success', "Mock audit flags untuk episode ID {$id} berhasil disimpan.");
     }
 
     public function updateToReview(int $id): RedirectResponse
@@ -232,8 +184,85 @@ class CasemixDashboardController extends Controller
             'review_notes' => 'Status diperbarui dari dashboard.',
         ]);
 
+        return redirect()->route('casemix.index')->with('success', "Status episode ID {$id} berhasil diperbarui ke review.");
+    }
+
+    public function saveVerification(Request $request, int $id, string $verificationKey, ClaimVerificationService $claimVerificationService): RedirectResponse
+    {
+        $validated = $request->validate([
+            'verification_label' => ['required', 'string', 'max:255'],
+            'status' => ['required', 'string', 'max:50'],
+            'finding_notes' => ['nullable', 'string'],
+            'follow_up_notes' => ['nullable', 'string'],
+            'source_reference' => ['nullable', 'string', 'max:255'],
+            'reviewer_name' => ['nullable', 'string', 'max:255'],
+            'reviewer_role' => ['nullable', 'string', 'max:100'],
+        ]);
+
+        $claimVerificationService->updateItem($id, $verificationKey, $validated);
+
+        return redirect()->route('casemix.show', $id)->with('success', 'Checklist verifikasi berhasil diperbarui.');
+    }
+
+    public function createFollowUp(Request $request, int $id, ClaimFollowUpService $claimFollowUpService): RedirectResponse
+    {
+        $validated = $request->validate([
+            'category' => ['required', 'string', 'max:100'],
+            'title' => ['required', 'string', 'max:255'],
+            'target_unit' => ['nullable', 'string', 'max:100'],
+            'priority' => ['required', 'string', 'max:50'],
+            'status' => ['required', 'string', 'max:50'],
+            'issue_summary' => ['nullable', 'string'],
+            'action_needed' => ['nullable', 'string'],
+            'resolution_notes' => ['nullable', 'string'],
+            'created_by_name' => ['nullable', 'string', 'max:255'],
+            'assigned_to_name' => ['nullable', 'string', 'max:255'],
+            'due_at' => ['nullable', 'date'],
+        ]);
+
+        $claimFollowUpService->create($id, $validated);
+
+        return redirect()->route('casemix.show', $id)->with('success', 'Follow up berhasil ditambahkan.');
+    }
+
+    public function updateFollowUp(Request $request, int $id, int $followUpId, ClaimFollowUpService $claimFollowUpService): RedirectResponse
+    {
+        $validated = $request->validate([
+            'category' => ['nullable', 'string', 'max:100'],
+            'title' => ['nullable', 'string', 'max:255'],
+            'target_unit' => ['nullable', 'string', 'max:100'],
+            'priority' => ['nullable', 'string', 'max:50'],
+            'status' => ['nullable', 'string', 'max:50'],
+            'issue_summary' => ['nullable', 'string'],
+            'action_needed' => ['nullable', 'string'],
+            'resolution_notes' => ['nullable', 'string'],
+            'assigned_to_name' => ['nullable', 'string', 'max:255'],
+            'due_at' => ['nullable', 'date'],
+            'updated_by_name' => ['nullable', 'string', 'max:255'],
+        ]);
+
+        $claimFollowUpService->update($followUpId, $validated);
+
+        return redirect()->route('casemix.show', $id)->with('success', 'Follow up berhasil diperbarui.');
+    }
+
+    public function importOperational(Request $request, int $id, OperationalImportService $operationalImportService): RedirectResponse
+    {
+        $validated = $request->validate([
+            'raw_import_text' => ['required', 'string'],
+            'import_reviewer_name' => ['nullable', 'string', 'max:255'],
+            'import_reviewer_role' => ['nullable', 'string', 'max:100'],
+        ]);
+
+        $result = $operationalImportService->importFromText(
+            $id,
+            $validated['raw_import_text'],
+            $validated['import_reviewer_name'] ?? 'Importer',
+            $validated['import_reviewer_role'] ?? 'casemix'
+        );
+
         return redirect()
-            ->route('casemix.index')
-            ->with('success', "Status episode ID {$id} berhasil diperbarui ke review.");
+            ->route('casemix.show', $id)
+            ->with('success', "Import operasional selesai. Diproses {$result['processed']} baris, follow-up dibuat {$result['follow_ups_created']}.");
     }
 }
