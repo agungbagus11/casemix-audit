@@ -3,18 +3,23 @@
 namespace App\Http\Controllers;
 
 use App\Models\ClaimEpisode;
+use App\Models\ClaimFollowUp;
+use App\Models\ClaimReview;
+use App\Models\ClaimVerificationItem;
 use App\Services\AuditResultService;
 use App\Services\ClaimFollowUpService;
 use App\Services\ClaimSyncService;
 use App\Services\ClaimVerificationService;
+use App\Services\DashboardNotificationService;
 use App\Services\OperationalImportService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\View\View;
 
 class CasemixDashboardController extends Controller
 {
-    public function index(Request $request): View
+    public function index(Request $request, DashboardNotificationService $dashboardNotificationService): View
     {
         $q = trim((string) $request->get('q', ''));
         $stage = trim((string) $request->get('stage', ''));
@@ -70,9 +75,113 @@ class CasemixDashboardController extends Controller
             'medium_risk' => ClaimEpisode::where('risk_level', 'medium')->count(),
             'flagged' => ClaimEpisode::where('audit_status', 'flagged')->count(),
             'ready_review' => ClaimEpisode::where('claim_status', 'ready_review')->count(),
+            'follow_up_open' => ClaimFollowUp::where('status', 'open')->count(),
+            'follow_up_waiting' => ClaimFollowUp::where('status', 'waiting')->count(),
+            'follow_up_resolved' => ClaimFollowUp::whereIn('status', ['resolved', 'closed'])->count(),
         ];
 
-        return view('casemix.index', compact('episodes', 'stats', 'q', 'stage', 'risk'));
+        $verificationSummary = [
+            'billing_vs_cppt' => [
+                'match' => ClaimVerificationItem::where('verification_key', 'billing_vs_cppt')->where('status', 'match')->count(),
+                'mismatch' => ClaimVerificationItem::where('verification_key', 'billing_vs_cppt')->where('status', 'mismatch')->count(),
+                'need_confirmation' => ClaimVerificationItem::where('verification_key', 'billing_vs_cppt')->where('status', 'need_confirmation')->count(),
+            ],
+            'chronology_vs_cppt' => [
+                'match' => ClaimVerificationItem::where('verification_key', 'chronology_vs_cppt')->where('status', 'match')->count(),
+                'mismatch' => ClaimVerificationItem::where('verification_key', 'chronology_vs_cppt')->where('status', 'mismatch')->count(),
+                'need_confirmation' => ClaimVerificationItem::where('verification_key', 'chronology_vs_cppt')->where('status', 'need_confirmation')->count(),
+            ],
+            'documents_vs_rm' => [
+                'match' => ClaimVerificationItem::where('verification_key', 'documents_vs_rm')->where('status', 'match')->count(),
+                'mismatch' => ClaimVerificationItem::where('verification_key', 'documents_vs_rm')->where('status', 'mismatch')->count(),
+                'need_confirmation' => ClaimVerificationItem::where('verification_key', 'documents_vs_rm')->where('status', 'need_confirmation')->count(),
+            ],
+        ];
+
+        $highPriorityFollowUps = ClaimFollowUp::query()
+            ->with('episode')
+            ->where('priority', 'high')
+            ->whereIn('status', ['open', 'waiting'])
+            ->latest()
+            ->limit(8)
+            ->get();
+
+        $activeFollowUps = ClaimFollowUp::query()
+            ->with('episode')
+            ->whereIn('status', ['open', 'waiting'])
+            ->latest()
+            ->limit(10)
+            ->get();
+
+        $notifications = $dashboardNotificationService->getForUser(auth()->user());
+
+        $chartData = [
+            'mismatch' => [
+                'labels' => [
+                    'Billing vs CPPT',
+                    'Kronologis vs CPPT',
+                    'Berkas vs RM',
+                ],
+                'mismatch' => [
+                    $verificationSummary['billing_vs_cppt']['mismatch'],
+                    $verificationSummary['chronology_vs_cppt']['mismatch'],
+                    $verificationSummary['documents_vs_rm']['mismatch'],
+                ],
+                'need_confirmation' => [
+                    $verificationSummary['billing_vs_cppt']['need_confirmation'],
+                    $verificationSummary['chronology_vs_cppt']['need_confirmation'],
+                    $verificationSummary['documents_vs_rm']['need_confirmation'],
+                ],
+            ],
+            'followup_status' => [
+                'labels' => ['Open', 'Waiting', 'Resolved/Closed'],
+                'values' => [
+                    $stats['follow_up_open'],
+                    $stats['follow_up_waiting'],
+                    $stats['follow_up_resolved'],
+                ],
+            ],
+            'risk_distribution' => [
+                'labels' => ['Clear', 'Low', 'Medium', 'High'],
+                'values' => [
+                    ClaimEpisode::where('risk_level', 'clear')->count(),
+                    ClaimEpisode::where('risk_level', 'low')->count(),
+                    ClaimEpisode::where('risk_level', 'medium')->count(),
+                    ClaimEpisode::where('risk_level', 'high')->count(),
+                ],
+            ],
+            'activity_7_days' => $this->buildActivityChart(),
+        ];
+
+        return view('casemix.index', compact(
+            'episodes',
+            'stats',
+            'q',
+            'stage',
+            'risk',
+            'verificationSummary',
+            'highPriorityFollowUps',
+            'activeFollowUps',
+            'notifications',
+            'chartData'
+        ));
+    }
+
+    protected function buildActivityChart(): array
+    {
+        $labels = [];
+        $values = [];
+
+        for ($i = 6; $i >= 0; $i--) {
+            $date = Carbon::today()->subDays($i);
+            $labels[] = $date->format('d M');
+            $values[] = ClaimReview::whereDate('created_at', $date->toDateString())->count();
+        }
+
+        return [
+            'labels' => $labels,
+            'values' => $values,
+        ];
     }
 
     public function show(int $id, ClaimVerificationService $claimVerificationService): View

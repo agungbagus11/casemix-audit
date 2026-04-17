@@ -5,13 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Casemix Audit Dashboard</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
         body { font-family: 'Poppins', sans-serif; }
-        .glass {
-            background: rgba(255,255,255,0.78);
-            backdrop-filter: blur(10px);
-        }
     </style>
 </head>
 <body class="min-h-screen bg-gradient-to-br from-slate-100 via-blue-50 to-emerald-50 text-slate-800">
@@ -23,11 +20,45 @@
                     <p class="text-sm text-slate-500">Workbench klaim, verifikasi, pending, dan review operasional</p>
                 </div>
 
-                <div class="flex items-center gap-2">
-                    <a href="{{ route('casemix.index') }}"
-                       class="inline-flex items-center rounded-2xl bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white shadow hover:bg-slate-800 transition">
-                        Dashboard
-                    </a>
+                <div class="flex items-center gap-3 flex-wrap justify-end">
+                    @auth
+                        <div class="text-right">
+                            <div class="text-sm font-bold text-slate-900">{{ auth()->user()->name }}</div>
+                            <div class="text-xs text-slate-500">{{ auth()->user()->role }}</div>
+                        </div>
+
+                        <a href="{{ route('casemix.index') }}"
+                           class="inline-flex items-center rounded-2xl bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white shadow hover:bg-slate-800 transition">
+                            Dashboard
+                        </a>
+
+                        <a href="{{ route('profile.show') }}"
+                           class="inline-flex items-center rounded-2xl bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white shadow hover:bg-emerald-700 transition">
+                            Profil
+                        </a>
+
+                        @role('admin', 'casemix', 'manager')
+                            <a href="{{ route('activity.index') }}"
+                               class="inline-flex items-center rounded-2xl bg-violet-600 px-5 py-2.5 text-sm font-semibold text-white shadow hover:bg-violet-700 transition">
+                                Activity
+                            </a>
+                        @endrole
+
+                        @role('admin')
+                            <a href="{{ route('users.index') }}"
+                               class="inline-flex items-center rounded-2xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow hover:bg-blue-700 transition">
+                                User
+                            </a>
+                        @endrole
+
+                        <form method="POST" action="{{ route('logout') }}">
+                            @csrf
+                            <button type="submit"
+                                    class="inline-flex items-center rounded-2xl bg-rose-600 px-5 py-2.5 text-sm font-semibold text-white shadow hover:bg-rose-700 transition">
+                                Logout
+                            </button>
+                        </form>
+                    @endauth
                 </div>
             </div>
         </nav>
@@ -54,5 +85,7 @@
             @yield('content')
         </main>
     </div>
+
+    @stack('scripts')
 </body>
 </html>
